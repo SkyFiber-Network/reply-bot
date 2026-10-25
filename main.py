@@ -10,6 +10,7 @@ import discord
 from hourly_promo import start_hourly_promo
 
 logger = logging.getLogger(__name__)
+LOG_CHANNEL_ID = 1555451943638532166
 
 
 def claim_first_reply(database_path: str, user_id: int) -> bool:
@@ -108,11 +109,10 @@ def main() -> None:
     intents.dm_messages = True
 
     database_path = os.environ.get("REPLY_DB_PATH", "reply_history.sqlite3")
-    log_channel_id = int(os.environ["LOG_CHANNEL_ID"])
     client = ReplyBot(
         intents=intents,
         database_path=database_path,
-        log_channel_id=log_channel_id,
+        log_channel_id=LOG_CHANNEL_ID,
     )
 
     start_hourly_promo(client)

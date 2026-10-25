@@ -9,5 +9,3 @@ services:
         sync: false
       - key: REPLY_MESSAGE
         sync: false
-      - key: LOG_CHANNEL_ID
-        sync: false

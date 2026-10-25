@@ -12,7 +12,7 @@ This bot replies to the first direct message from each person with the text in `
 
 1. Push this project to a GitHub repository.
 2. In Render, choose **New** > **Blueprint**, select the repository, and deploy the `render.yaml` worker.
-3. In the worker's **Environment** settings, set `DISCORD_TOKEN` to the bot token, `REPLY_MESSAGE` to the exact reply you want, and `LOG_CHANNEL_ID` to the ID of a text channel where the bot can view and send messages.
+3. In the worker's **Environment** settings, set `DISCORD_TOKEN` to the bot token and `REPLY_MESSAGE` to the exact reply you want.
 4. Save the environment variables and redeploy if prompted.
 
 The worker runs continuously while the Render service is active. No web server or port is needed.
@@ -25,4 +25,4 @@ When the bot connects or reconnects, it checks the newest 30 incoming messages a
 
 ## Reply logs
 
-After a DM reply is successfully sent, the bot posts a log entry containing the recipient's Discord user ID in the channel configured by `LOG_CHANNEL_ID`. It does not copy the DM text into the log.
+After a DM reply is successfully sent, the bot posts a log entry containing the recipient's Discord user ID in the configured log channel. The channel ID is set in `main.py`. It does not copy the DM text into the log.
