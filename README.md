@@ -1,6 +1,6 @@
 # Discord DM Reply Bot
 
-This bot replies to each direct message sent to it with the text in `REPLY_MESSAGE`. It does not reply in servers or to other bots.
+This bot replies to the first direct message from each person with the text in `REPLY_MESSAGE`. It does not reply in servers or to other bots, and it will not reply to that person again.
 
 ## Set up the Discord bot
 
@@ -12,7 +12,17 @@ This bot replies to each direct message sent to it with the text in `REPLY_MESSA
 
 1. Push this project to a GitHub repository.
 2. In Render, choose **New** > **Blueprint**, select the repository, and deploy the `render.yaml` worker.
-3. In the worker's **Environment** settings, set `DISCORD_TOKEN` to the bot token and `REPLY_MESSAGE` to the exact reply you want.
+3. In the worker's **Environment** settings, set `DISCORD_TOKEN` to the bot token, `REPLY_MESSAGE` to the exact reply you want, and `LOG_CHANNEL_ID` to the ID of a text channel where the bot can view and send messages.
 4. Save the environment variables and redeploy if prompted.
 
 The worker runs continuously while the Render service is active. No web server or port is needed.
+
+## Reply history
+
+The bot records Discord user IDs in a SQLite database so the once-per-person limit survives restarts. By default, the database is `reply_history.sqlite3` in the working directory. Set `REPLY_DB_PATH` to a path on NexusHosting's persistent storage if its default working directory is not preserved. Keep this database when updating or redeploying the bot; deleting it resets the reply history.
+
+When the bot connects or reconnects, it checks the newest 30 incoming messages across its cached private channels and replies to people who are not yet in the reply history. Discord.py exposes at most 128 recent private channels, so this cannot recover messages from channels outside that cache or older than the checked messages. Failed sends are not recorded, allowing a later retry.
+
+## Reply logs
+
+After a DM reply is successfully sent, the bot posts a log entry containing the recipient's Discord user ID in the channel configured by `LOG_CHANNEL_ID`. It does not copy the DM text into the log.
