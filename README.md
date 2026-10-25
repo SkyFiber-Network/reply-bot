@@ -19,9 +19,9 @@ The worker runs continuously while the Render service is active. No web server o
 
 ## Reply history
 
-The bot records Discord user IDs in a SQLite database so the once-per-person limit survives restarts. By default, the database is `reply_history.sqlite3` in the working directory. Set `REPLY_DB_PATH` to a path on NexusHosting's persistent storage if its default working directory is not preserved. Keep this database when updating or redeploying the bot; deleting it resets the reply history.
+The bot records replied-to Discord user IDs, known DM channel IDs, and a message checkpoint for each DM channel in a SQLite database. By default, the database is `reply_history.sqlite3` in the working directory. Configure `REPLY_DB_PATH` to a path on persistent storage for your hosting provider and keep that database across restarts and deployments; losing it resets both reply tracking and offline-DM checkpoints.
 
-When the bot connects or reconnects, it checks the newest 30 incoming messages across its cached private channels and replies to people who are not yet in the reply history. Discord.py exposes at most 128 recent private channels, so this cannot recover messages from channels outside that cache or older than the checked messages. Failed sends are not recorded, allowing a later retry.
+When the bot connects or reconnects, it checks up to 100 messages after the last saved checkpoints across recorded DM channels, replying to users not already in the reply history. `/checkdms` does the same and can be run again to continue if more than 100 messages are waiting. Failed sends do not advance the checkpoint past the failed message, so another check can retry it. The bot can only recover offline messages in channels it has recorded; it cannot discover every DM channel independently.
 
 ## Reply logs
 
@@ -32,6 +32,6 @@ After a DM reply is successfully sent, the bot posts a log entry containing the 
 The owner account configured by `OWNER_USER_ID` in `main.py` can use these slash commands in a direct message with the bot:
 
 - `/test_reply` sends the configured reply to the owner and posts the usual log entry. It does not affect the owner's once-per-person reply history.
-- `/checkdms` checks the 100 newest human-authored messages across the bot's cached private channels and sends the configured reply to users not already recorded in the reply history. The command reports how many messages were checked, replies sent or skipped, send failures, and channels whose history could not be read.
+- `/checkdms` checks up to 100 messages since the last saved checkpoints across recorded DM channels and replies to users not already recorded in the reply history. The command reports how many messages were checked, replies sent or skipped, send failures, and channels whose history could not be read. If there are no recorded channels, DM the bot while it is online first so it can save the channel for future offline recovery.
 
-Discord application commands can take some time to appear after deployment. The history check is limited to cached private channels and cannot guarantee coverage of DMs Discord does not make available to the bot.
+Discord application commands can take some time to appear after deployment. Channel IDs are recorded as the bot encounters DMs. It cannot recover offline messages from a channel that was never recorded before the bot went offline, and the SQLite database must be on persistent storage for checkpoints to survive a redeploy.

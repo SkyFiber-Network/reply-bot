@@ -24,6 +24,58 @@ class BackfillResult:
     already_replied: int
     failed_replies: int
     unavailable_channels: int
+    tracked_channels: int
+
+
+def track_dm_channel(
+    database_path: str,
+    channel_id: int,
+    initial_message_id: int = 0,
+) -> bool:
+    path = Path(database_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    with closing(sqlite3.connect(path)) as connection:
+        with connection:
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS dm_channels ("
+                "channel_id INTEGER PRIMARY KEY, "
+                "last_message_id INTEGER NOT NULL)"
+            )
+            result = connection.execute(
+                "INSERT OR IGNORE INTO dm_channels "
+                "(channel_id, last_message_id) VALUES (?, ?)",
+                (channel_id, initial_message_id),
+            )
+            return result.rowcount == 1
+
+
+def get_tracked_dm_channels(database_path: str) -> list[tuple[int, int]]:
+    Path(database_path).parent.mkdir(parents=True, exist_ok=True)
+    with closing(sqlite3.connect(database_path)) as connection:
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS dm_channels ("
+            "channel_id INTEGER PRIMARY KEY, "
+            "last_message_id INTEGER NOT NULL)"
+        )
+        return connection.execute(
+            "SELECT channel_id, last_message_id FROM dm_channels"
+        ).fetchall()
+
+
+def update_dm_channel_checkpoint(
+    database_path: str,
+    channel_id: int,
+    message_id: int,
+) -> None:
+    Path(database_path).parent.mkdir(parents=True, exist_ok=True)
+    with closing(sqlite3.connect(database_path)) as connection:
+        with connection:
+            connection.execute(
+                "UPDATE dm_channels SET last_message_id = ? "
+                "WHERE channel_id = ? AND last_message_id < ?",
+                (message_id, channel_id, message_id),
+            )
 
 
 def claim_first_reply(database_path: str, user_id: int) -> bool:
@@ -81,7 +133,7 @@ class ReplyBot(discord.Client):
 
         @app_commands.command(
             name="checkdms",
-            description="Check the 100 newest cached DM messages and reply if needed",
+            description="Check for missed messages in tracked DMs",
         )
         @app_commands.allowed_contexts(
             guilds=False,
@@ -117,8 +169,16 @@ class ReplyBot(discord.Client):
 
         await interaction.response.defer()
         result = await self._catch_up_recent_dms(message_limit=100)
+        if result.tracked_channels == 0:
+            await interaction.followup.send(
+                "No DM channels are recorded yet. The bot must see a DM while "
+                "online before it can track that channel for offline catch-up."
+            )
+            return
+
         await interaction.followup.send(
-            f"Checked {result.scanned_messages} recent DM messages: "
+            f"Checked {result.scanned_messages} messages since the last check "
+            f"across {result.tracked_channels} tracked DMs: "
             f"sent {result.replies_sent} replies, skipped "
             f"{result.already_replied} already-replied messages, "
             f"and failed to send {result.failed_replies} replies. "
@@ -156,50 +216,145 @@ class ReplyBot(discord.Client):
         self,
         channels: Sequence[discord.abc.PrivateChannel] | None = None,
         *,
-        message_limit: int = 30,
+        message_limit: int = 100,
     ) -> BackfillResult:
         if message_limit < 1:
             raise ValueError("message_limit must be at least 1")
 
         async with self._backfill_lock:
-            recent_messages: list[discord.Message] = []
             unavailable_channels = 0
-            for channel in self.private_channels if channels is None else channels:
+            if channels is not None:
+                for channel in channels:
+                    track_dm_channel(self.database_path, channel.id)
+                tracked_checkpoints = dict(
+                    get_tracked_dm_channels(self.database_path)
+                )
+                channels_to_scan = [
+                    (channel, channel.id, tracked_checkpoints[channel.id])
+                    for channel in channels
+                ]
+                tracked_channel_count = len(tracked_checkpoints)
+            else:
+                cached_channels = {
+                    channel.id: channel for channel in self.private_channels
+                }
+                tracked_channels = get_tracked_dm_channels(self.database_path)
+                tracked_channel_count = len(tracked_channels)
+                tracked_ids = {channel_id for channel_id, _ in tracked_channels}
+                for channel_id, channel in cached_channels.items():
+                    if channel_id not in tracked_ids:
+                        try:
+                            latest_message = None
+                            async for message in channel.history(limit=1):
+                                latest_message = message
+                            checkpoint = (
+                                latest_message.id if latest_message is not None else 0
+                            )
+                            track_dm_channel(
+                                self.database_path,
+                                channel_id,
+                                checkpoint,
+                            )
+                        except discord.DiscordException:
+                            unavailable_channels += 1
+                            logger.exception("Could not initialize DM history")
+
+                tracked_channels = get_tracked_dm_channels(self.database_path)
+                tracked_channel_count = len(tracked_channels)
+                channels_to_scan = []
+                for channel_id, checkpoint in tracked_channels:
+                    channel = cached_channels.get(channel_id)
+                    if channel is None:
+                        try:
+                            channel = await self.fetch_channel(channel_id)
+                        except discord.DiscordException:
+                            unavailable_channels += 1
+                            logger.exception(
+                                "Could not fetch tracked DM channel %s",
+                                channel_id,
+                            )
+                            continue
+
+                    if not isinstance(channel, discord.abc.PrivateChannel):
+                        unavailable_channels += 1
+                        logger.error(
+                            "Tracked channel %s is not a private channel",
+                            channel_id,
+                        )
+                        continue
+                    channels_to_scan.append((channel, channel_id, checkpoint))
+
+            pending_messages: list[tuple[int, discord.Message]] = []
+            for channel, channel_id, checkpoint in channels_to_scan:
                 try:
-                    async for message in channel.history(limit=message_limit):
-                        if message.guild is None and not message.author.bot:
-                            recent_messages.append(message)
+                    after = discord.Object(id=checkpoint) if checkpoint else None
+                    async for message in channel.history(
+                        limit=message_limit,
+                        after=after,
+                        oldest_first=True,
+                    ):
+                        pending_messages.append((channel_id, message))
                 except discord.DiscordException:
                     unavailable_channels += 1
-                    logger.exception("Could not read DM history")
+                    logger.exception("Could not read DM history for channel %s", channel_id)
 
-            recent_messages.sort(key=lambda message: message.created_at)
-            messages_to_check = recent_messages[-message_limit:]
+            scanned_messages = 0
             replies_sent = 0
             already_replied = 0
             failed_replies = 0
-            for message in messages_to_check:
-                result = await self._send_first_reply(message)
-                if result == "replied":
-                    replies_sent += 1
-                elif result == "already_replied":
-                    already_replied += 1
-                else:
-                    failed_replies += 1
+            failed_channels: set[int] = set()
+            pending_messages.sort(key=lambda item: item[1].id)
+            for channel_id, message in pending_messages[:message_limit]:
+                if channel_id in failed_channels:
+                    continue
+
+                scanned_messages += 1
+                if message.guild is None and not message.author.bot:
+                    result = await self._send_first_reply(message)
+                    if result == "replied":
+                        replies_sent += 1
+                    elif result == "already_replied":
+                        already_replied += 1
+                    else:
+                        failed_replies += 1
+                        failed_channels.add(channel_id)
+                        continue
+
+                update_dm_channel_checkpoint(
+                    self.database_path,
+                    channel_id,
+                    message.id,
+                )
 
             return BackfillResult(
-                scanned_messages=len(messages_to_check),
+                scanned_messages=scanned_messages,
                 replies_sent=replies_sent,
                 already_replied=already_replied,
                 failed_replies=failed_replies,
                 unavailable_channels=unavailable_channels,
+                tracked_channels=tracked_channel_count,
             )
 
     async def on_message(self, message: discord.Message) -> None:
         if message.guild is not None or message.author.bot:
             return
 
-        await self._send_first_reply(message)
+        is_new_channel = track_dm_channel(
+            self.database_path,
+            message.channel.id,
+            max(message.id - 1, 0),
+        )
+        if is_new_channel:
+            result = await self._send_first_reply(message)
+            if result != "failed":
+                update_dm_channel_checkpoint(
+                    self.database_path,
+                    message.channel.id,
+                    message.id,
+                )
+            return
+
+        await self._catch_up_recent_dms([message.channel])
 
 
 def main() -> None:
