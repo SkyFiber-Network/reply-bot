@@ -4,6 +4,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
+from aiohttp import ClientSession
 
 import discord
 
@@ -69,6 +70,7 @@ class ReplyLoggingTests(unittest.IsolatedAsyncioTestCase):
                 log_channel_id=24680,
             )
             bot.tree.sync = AsyncMock(return_value=[])
+            bot._start_health_server = AsyncMock()
 
             await bot.setup_hook()
 
@@ -77,6 +79,27 @@ class ReplyLoggingTests(unittest.IsolatedAsyncioTestCase):
                 {"test_reply", "checkdms"},
             )
             bot.tree.sync.assert_awaited_once()
+            bot._start_health_server.assert_awaited_once()
+
+    async def test_health_endpoint_returns_ok_over_http(self) -> None:
+        bot = ReplyBot(
+            intents=discord.Intents.default(),
+            database_path="unused.sqlite3",
+            log_channel_id=24680,
+        )
+        with patch.dict(os.environ, {"PORT": "0"}):
+            await bot._start_health_server()
+
+        try:
+            address = bot._health_runner.addresses[0]
+            async with ClientSession() as session:
+                async with session.get(
+                    f"http://127.0.0.1:{address[1]}/health"
+                ) as response:
+                    self.assertEqual(response.status, 200)
+                    self.assertEqual(await response.text(), "OK")
+        finally:
+            await bot.close()
 
     async def test_test_reply_command_is_owner_only_and_does_not_mark_owner_replied(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from aiohttp import web
 import discord
 from discord import app_commands
 from hourly_promo import start_hourly_promo
@@ -117,6 +118,7 @@ class ReplyBot(discord.Client):
         self.log_channel_id = log_channel_id
         self._backfill_lock = asyncio.Lock()
         self.tree = app_commands.CommandTree(self)
+        self._health_runner: web.AppRunner | None = None
 
     async def setup_hook(self) -> None:
         @app_commands.command(
@@ -145,7 +147,31 @@ class ReplyBot(discord.Client):
 
         self.tree.add_command(test_reply)
         self.tree.add_command(checkdms)
+        await self._start_health_server()
         await self.tree.sync()
+
+    async def _start_health_server(self) -> None:
+        app = web.Application()
+        app.router.add_get("/health", self._health_check)
+
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(
+            runner,
+            host="0.0.0.0",
+            port=int(os.environ.get("PORT", "8080")),
+        )
+        await site.start()
+        self._health_runner = runner
+
+    async def _health_check(self, request: web.Request) -> web.Response:
+        return web.Response(text="OK")
+
+    async def close(self) -> None:
+        if self._health_runner is not None:
+            await self._health_runner.cleanup()
+            self._health_runner = None
+        await super().close()
 
     async def _is_owner(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id == OWNER_USER_ID:

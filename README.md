@@ -11,11 +11,15 @@ This bot replies to the first direct message from each person with the text in `
 ## Deploy on Render
 
 1. Push this project to a GitHub repository.
-2. In Render, choose **New** > **Blueprint**, select the repository, and deploy the `render.yaml` worker.
-3. In the worker's **Environment** settings, set `DISCORD_TOKEN` to the bot token and `REPLY_MESSAGE` to the exact reply you want.
+2. In Render, choose **New** > **Blueprint**, select the repository, and deploy the `render.yaml` web service.
+3. In the service's **Environment** settings, set `DISCORD_TOKEN` to the bot token and `REPLY_MESSAGE` to the exact reply you want.
 4. Save the environment variables and redeploy if prompted.
 
-The worker runs continuously while the Render service is active. No web server or port is needed.
+The service runs the Discord bot and exposes a small `/health` endpoint for Render health checks and external uptime monitors.
+
+### Keep a free Render service awake
+
+Free Render web services can spin down after 15 minutes without inbound requests. The bot serves `https://YOUR-SERVICE.onrender.com/health`; add this URL as an **HTTP(s)** monitor in UptimeRobot and use its most frequent available check interval. This inbound request can prevent inactivity spin-down, but it cannot prevent deploys, crashes, or other platform restarts. A free service kept awake also uses the workspace's monthly free instance hours.
 
 ## Reply history
 
