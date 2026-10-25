@@ -26,3 +26,12 @@ When the bot connects or reconnects, it checks the newest 30 incoming messages a
 ## Reply logs
 
 After a DM reply is successfully sent, the bot posts a log entry containing the recipient's Discord user ID in the configured log channel. The channel ID is set in `main.py`. It does not copy the DM text into the log.
+
+## Owner commands
+
+The owner account configured by `OWNER_USER_ID` in `main.py` can use these slash commands in a direct message with the bot:
+
+- `/test_reply` sends the configured reply to the owner and posts the usual log entry. It does not affect the owner's once-per-person reply history.
+- `/checkdms` checks the 100 newest human-authored messages across the bot's cached private channels and sends the configured reply to users not already recorded in the reply history. The command reports how many messages were checked, replies sent or skipped, send failures, and channels whose history could not be read.
+
+Discord application commands can take some time to appear after deployment. The history check is limited to cached private channels and cannot guarantee coverage of DMs Discord does not make available to the bot.
