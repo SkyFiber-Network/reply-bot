@@ -400,7 +400,10 @@ def main() -> None:
 
     @client.event
     async def on_ready() -> None:
-        await client._catch_up_recent_dms()
+        try:
+            await client._catch_up_recent_dms()
+        except Exception:
+            logger.exception("DM catch-up failed on ready")
         await promo_on_ready()
 
     client.run(token)
